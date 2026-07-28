@@ -1,0 +1,339 @@
+"use client";
+
+import {
+  useActionState,
+  useEffect,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
+import type { IScannerControls } from "@zxing/browser";
+import { mediaTypes, type MediaType } from "@/lib/db/schema";
+import {
+  createItemAction,
+  lookupBarcodeAction,
+  type CreateItemState,
+} from "./actions";
+
+const initialCreateItemState: CreateItemState = {};
+
+type ReviewData = {
+  mediaType: MediaType;
+  title: string;
+  subtitle: string;
+  creators: string;
+  year: string;
+  coverImageUrl: string;
+  barcode: string;
+  metadataSource: string;
+  rawMetadata: string;
+  notice?: string;
+};
+
+function emptyReview(barcode = ""): ReviewData {
+  return {
+    mediaType: "book",
+    title: "",
+    subtitle: "",
+    creators: "",
+    year: "",
+    coverImageUrl: "",
+    barcode,
+    metadataSource: "",
+    rawMetadata: "",
+  };
+}
+
+const inputClass = "border rounded px-3 py-2 bg-transparent";
+const labelClass = "text-sm font-medium";
+
+export function Scanner() {
+  const [mode, setMode] = useState<"scanning" | "manual" | "review" | "success">(
+    "scanning"
+  );
+  const [manualBarcode, setManualBarcode] = useState("");
+  const [review, setReview] = useState<ReviewData | null>(null);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [looking, startLookup] = useTransition();
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const controlsRef = useRef<IScannerControls | null>(null);
+  const handledRef = useRef(false);
+
+  const [formState, formAction, pending] = useActionState(
+    createItemAction,
+    initialCreateItemState
+  );
+
+  useEffect(() => {
+    if (formState.success) setMode("success");
+  }, [formState]);
+
+  useEffect(() => {
+    if (mode !== "scanning") return;
+
+    let cancelled = false;
+    handledRef.current = false;
+
+    async function start() {
+      try {
+        const { BrowserMultiFormatReader } = await import("@zxing/browser");
+        if (cancelled || !videoRef.current) return;
+
+        const reader = new BrowserMultiFormatReader();
+        const controls = await reader.decodeFromVideoDevice(
+          undefined,
+          videoRef.current,
+          (result) => {
+            if (result && !handledRef.current) {
+              handledRef.current = true;
+              controlsRef.current?.stop();
+              handleDecoded(result.getText());
+            }
+          }
+        );
+        if (cancelled) {
+          controls.stop();
+          return;
+        }
+        controlsRef.current = controls;
+      } catch (err) {
+        if (!cancelled) {
+          setCameraError(
+            err instanceof Error ? err.message : "Could not access the camera."
+          );
+        }
+      }
+    }
+
+    start();
+
+    return () => {
+      cancelled = true;
+      controlsRef.current?.stop();
+      controlsRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
+  function handleDecoded(barcode: string) {
+    startLookup(async () => {
+      const outcome = await lookupBarcodeAction(barcode);
+      if ("result" in outcome) {
+        const r = outcome.result;
+        setReview({
+          mediaType: r.mediaType,
+          title: r.title ?? "",
+          subtitle: r.subtitle ?? "",
+          creators: r.creators ?? "",
+          year: r.year ?? "",
+          coverImageUrl: r.coverImageUrl ?? "",
+          barcode: r.barcode,
+          metadataSource: r.metadataSource,
+          rawMetadata: r.rawMetadata ? JSON.stringify(r.rawMetadata) : "",
+        });
+      } else {
+        setReview({ ...emptyReview(barcode), notice: outcome.error });
+      }
+      setMode("review");
+    });
+  }
+
+  function reset() {
+    setReview(null);
+    setManualBarcode("");
+    setCameraError(null);
+    setMode("scanning");
+  }
+
+  if (mode === "success") {
+    return (
+      <div className="flex flex-col gap-4">
+        <p>Added &ldquo;{formState.title}&rdquo; to the catalog.</p>
+        <button type="button" onClick={reset} className="underline text-left w-fit">
+          Scan another item
+        </button>
+      </div>
+    );
+  }
+
+  if (mode === "review" && review) {
+    return (
+      <form action={formAction} className="flex flex-col gap-4 max-w-sm">
+        {review.notice && (
+          <p className="text-sm text-amber-600">{review.notice}</p>
+        )}
+        {formState.error && <p className="text-sm text-red-600">{formState.error}</p>}
+
+        <input type="hidden" name="barcode" value={review.barcode} />
+        <input type="hidden" name="metadataSource" value={review.metadataSource} />
+        <input type="hidden" name="rawMetadata" value={review.rawMetadata} />
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor="mediaType" className={labelClass}>
+            Media type
+          </label>
+          <select
+            id="mediaType"
+            name="mediaType"
+            defaultValue={review.mediaType}
+            className={inputClass}
+          >
+            {mediaTypes.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor="title" className={labelClass}>
+            Title
+          </label>
+          <input
+            id="title"
+            name="title"
+            required
+            defaultValue={review.title}
+            className={inputClass}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor="subtitle" className={labelClass}>
+            Subtitle
+          </label>
+          <input
+            id="subtitle"
+            name="subtitle"
+            defaultValue={review.subtitle}
+            className={inputClass}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor="creators" className={labelClass}>
+            Creators
+          </label>
+          <input
+            id="creators"
+            name="creators"
+            defaultValue={review.creators}
+            className={inputClass}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor="year" className={labelClass}>
+            Year
+          </label>
+          <input
+            id="year"
+            name="year"
+            defaultValue={review.year}
+            className={inputClass}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor="coverImageUrl" className={labelClass}>
+            Cover image URL
+          </label>
+          <input
+            id="coverImageUrl"
+            name="coverImageUrl"
+            defaultValue={review.coverImageUrl}
+            className={inputClass}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor="notes" className={labelClass}>
+            Notes
+          </label>
+          <textarea id="notes" name="notes" className={inputClass} />
+        </div>
+
+        <div className="flex items-center gap-4">
+          <button
+            type="submit"
+            disabled={pending}
+            className="rounded bg-foreground text-background px-4 py-2 font-medium disabled:opacity-50"
+          >
+            {pending ? "Saving..." : "Save item"}
+          </button>
+          <button type="button" onClick={reset} className="underline text-sm">
+            Cancel
+          </button>
+        </div>
+      </form>
+    );
+  }
+
+  if (mode === "manual") {
+    return (
+      <div className="flex flex-col gap-4 max-w-sm">
+        <div className="flex flex-col gap-1">
+          <label htmlFor="manualBarcode" className={labelClass}>
+            Barcode
+          </label>
+          <input
+            id="manualBarcode"
+            value={manualBarcode}
+            onChange={(e) => setManualBarcode(e.target.value)}
+            inputMode="numeric"
+            autoFocus
+            className={inputClass}
+          />
+        </div>
+        <div className="flex items-center gap-4">
+          <button
+            type="button"
+            disabled={looking || !manualBarcode.trim()}
+            onClick={() => handleDecoded(manualBarcode.trim())}
+            className="rounded bg-foreground text-background px-4 py-2 font-medium disabled:opacity-50"
+          >
+            {looking ? "Looking up..." : "Look up"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setReview(emptyReview(manualBarcode.trim()))}
+            className="underline text-sm"
+          >
+            Skip lookup
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={() => setMode("scanning")}
+          className="underline text-sm text-left w-fit"
+        >
+          Use camera instead
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4 max-w-sm">
+      {cameraError ? (
+        <p className="text-sm text-red-600">{cameraError}</p>
+      ) : (
+        <video
+          ref={videoRef}
+          className="w-full rounded bg-black aspect-video"
+          muted
+          playsInline
+        />
+      )}
+      {looking && <p className="text-sm text-neutral-500">Looking up metadata...</p>}
+      <button
+        type="button"
+        onClick={() => setMode("manual")}
+        className="underline text-sm text-left w-fit"
+      >
+        Enter barcode manually
+      </button>
+    </div>
+  );
+}
