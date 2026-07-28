@@ -1,19 +1,31 @@
+import Link from "next/link";
 import { db } from "@/lib/db";
-import { items, type MediaType } from "@/lib/db/schema";
-import { desc } from "drizzle-orm";
+import { items, mediaTypes, type MediaType } from "@/lib/db/schema";
+import { mediaTypeLabels } from "@/lib/media-types";
+import { desc, eq } from "drizzle-orm";
 
-const mediaTypeLabels: Record<MediaType, string> = {
-  book: "Book",
-  cd: "CD",
-  dvd: "DVD",
-  other: "Other",
-};
+function isMediaType(value: string): value is MediaType {
+  return (mediaTypes as readonly string[]).includes(value);
+}
 
-export default async function Home() {
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: Promise<{ type?: string }>;
+}) {
+  const { type } = await searchParams;
+  const activeFilter = type && isMediaType(type) ? type : undefined;
+
   const catalogItems = await db.query.items.findMany({
     with: { addedBy: { columns: { name: true } } },
+    where: activeFilter ? eq(items.mediaType, activeFilter) : undefined,
     orderBy: desc(items.createdAt),
   });
+
+  const filterLinkClass = (isActive: boolean) =>
+    isActive
+      ? "font-medium underline"
+      : "text-neutral-500 underline decoration-neutral-300 dark:decoration-neutral-700";
 
   return (
     <div className="flex-1 p-6 flex flex-col gap-6 max-w-3xl">
@@ -25,9 +37,26 @@ export default async function Home() {
         </span>
       </div>
 
+      <div className="flex items-center gap-4 text-sm">
+        <Link href="/" className={filterLinkClass(!activeFilter)}>
+          All
+        </Link>
+        {mediaTypes.map((mt) => (
+          <Link
+            key={mt}
+            href={`/?type=${mt}`}
+            className={filterLinkClass(activeFilter === mt)}
+          >
+            {mediaTypeLabels[mt]}
+          </Link>
+        ))}
+      </div>
+
       {catalogItems.length === 0 ? (
         <p className="text-neutral-500">
-          No items yet. Scan a barcode to add the first one.
+          {activeFilter
+            ? `No ${mediaTypeLabels[activeFilter].toLowerCase()} items yet.`
+            : "No items yet. Scan a barcode to add the first one."}
         </p>
       ) : (
         <ul className="flex flex-col gap-3">
@@ -67,6 +96,12 @@ export default async function Home() {
                   </span>
                 )}
               </div>
+              <Link
+                href={`/items/${item.id}/edit`}
+                className="underline text-sm shrink-0 self-start"
+              >
+                Edit
+              </Link>
             </li>
           ))}
         </ul>

@@ -1,14 +1,32 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { items, mediaTypes, type MediaType } from "@/lib/db/schema";
 import { lookupBarcode, type LookupResult } from "@/lib/metadata-lookup";
 
+export type ExistingItemSummary = {
+  id: string;
+  title: string;
+  mediaType: MediaType;
+  year: string | null;
+};
+
+async function findExistingByBarcode(
+  barcode: string
+): Promise<ExistingItemSummary | undefined> {
+  const existing = await db.query.items.findFirst({
+    where: eq(items.barcode, barcode),
+    columns: { id: true, title: true, mediaType: true, year: true },
+  });
+  return existing as ExistingItemSummary | undefined;
+}
+
 export type BarcodeLookupOutcome =
-  | { result: LookupResult & { barcode: string } }
-  | { error: string };
+  | { result: LookupResult & { barcode: string }; existingItem?: ExistingItemSummary }
+  | { error: string; existingItem?: ExistingItemSummary };
 
 export async function lookupBarcodeAction(
   barcode: string
@@ -19,14 +37,29 @@ export async function lookupBarcodeAction(
   const trimmed = barcode.trim();
   if (!trimmed) return { error: "No barcode provided." };
 
+  const existingItem = await findExistingByBarcode(trimmed);
+
   const result = await lookupBarcode(trimmed);
   if (!result) {
     return {
       error: "No metadata found for that barcode. Enter the details manually.",
+      existingItem,
     };
   }
 
-  return { result: { ...result, barcode: trimmed } };
+  return { result: { ...result, barcode: trimmed }, existingItem };
+}
+
+export async function checkExistingItemAction(
+  barcode: string
+): Promise<ExistingItemSummary | undefined> {
+  const session = await auth();
+  if (!session?.user) return undefined;
+
+  const trimmed = barcode.trim();
+  if (!trimmed) return undefined;
+
+  return findExistingByBarcode(trimmed);
 }
 
 export type CreateItemState = {

@@ -9,10 +9,13 @@ import {
 } from "react";
 import type { IScannerControls } from "@zxing/browser";
 import { mediaTypes, type MediaType } from "@/lib/db/schema";
+import { mediaTypeLabels } from "@/lib/media-types";
 import {
+  checkExistingItemAction,
   createItemAction,
   lookupBarcodeAction,
   type CreateItemState,
+  type ExistingItemSummary,
 } from "./actions";
 
 const initialCreateItemState: CreateItemState = {};
@@ -28,6 +31,7 @@ type ReviewData = {
   metadataSource: string;
   rawMetadata: string;
   notice?: string;
+  existingItem?: ExistingItemSummary;
 };
 
 function emptyReview(barcode = ""): ReviewData {
@@ -63,10 +67,11 @@ export function Scanner() {
     createItemAction,
     initialCreateItemState
   );
-
-  useEffect(() => {
+  const [handledFormState, setHandledFormState] = useState(formState);
+  if (formState !== handledFormState) {
+    setHandledFormState(formState);
     if (formState.success) setMode("success");
-  }, [formState]);
+  }
 
   useEffect(() => {
     if (mode !== "scanning") return;
@@ -112,7 +117,6 @@ export function Scanner() {
       controlsRef.current?.stop();
       controlsRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
   function handleDecoded(barcode: string) {
@@ -130,10 +134,23 @@ export function Scanner() {
           barcode: r.barcode,
           metadataSource: r.metadataSource,
           rawMetadata: r.rawMetadata ? JSON.stringify(r.rawMetadata) : "",
+          existingItem: outcome.existingItem,
         });
       } else {
-        setReview({ ...emptyReview(barcode), notice: outcome.error });
+        setReview({
+          ...emptyReview(barcode),
+          notice: outcome.error,
+          existingItem: outcome.existingItem,
+        });
       }
+      setMode("review");
+    });
+  }
+
+  function handleSkipLookup(barcode: string) {
+    startLookup(async () => {
+      const existingItem = await checkExistingItemAction(barcode);
+      setReview({ ...emptyReview(barcode), existingItem });
       setMode("review");
     });
   }
@@ -161,6 +178,15 @@ export function Scanner() {
       <form action={formAction} className="flex flex-col gap-4 max-w-sm">
         {review.notice && (
           <p className="text-sm text-amber-600">{review.notice}</p>
+        )}
+        {review.existingItem && (
+          <p className="text-sm rounded border border-amber-600 text-amber-600 px-3 py-2">
+            Already in your catalog:{" "}
+            <strong>{mediaTypeLabels[review.existingItem.mediaType]}</strong>{" "}
+            &ldquo;{review.existingItem.title}&rdquo;
+            {review.existingItem.year && ` (${review.existingItem.year})`}.
+            Saving will add a second copy.
+          </p>
         )}
         {formState.error && <p className="text-sm text-red-600">{formState.error}</p>}
 
@@ -297,7 +323,8 @@ export function Scanner() {
           </button>
           <button
             type="button"
-            onClick={() => setReview(emptyReview(manualBarcode.trim()))}
+            disabled={looking}
+            onClick={() => handleSkipLookup(manualBarcode.trim())}
             className="underline text-sm"
           >
             Skip lookup
