@@ -78,16 +78,29 @@ type Item = {
   category: string;
   formats: string[];
   title: string;
+  sortTitle: string | null;
   subtitle: string | null;
   creators: string | null;
   year: string | null;
   coverImageUrl: string | null;
   barcode: string | null;
   isbn: string | null;
+  series: string | null;
+  seriesNumber: string | null;
   notes: string | null;
 };
 
-export function ItemForm({ item, from }: { item: Item; from?: string }) {
+export function ItemForm({
+  item,
+  from,
+  knownCreators = [],
+  knownSeries = [],
+}: {
+  item: Item;
+  from?: string;
+  knownCreators?: string[];
+  knownSeries?: string[];
+}) {
   const updateItemWithId = updateItemAction.bind(null, item.id);
   const [state, formAction, pending] = useActionState(
     updateItemWithId,
@@ -226,6 +239,22 @@ export function ItemForm({ item, from }: { item: Item; from?: string }) {
       </div>
 
       <div className="flex flex-col gap-1">
+        <label htmlFor="sortTitle" className={labelClass}>
+          Sort title
+        </label>
+        <input
+          id="sortTitle"
+          name="sortTitle"
+          defaultValue={item.sortTitle ?? ""}
+          placeholder={title || "Defaults to the title above"}
+          className={inputClass}
+        />
+        <p className="text-xs text-neutral-500">
+          Optional override for sorting only — e.g. &ldquo;Hobbit, The&rdquo; so it sorts under H.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-1">
         <label htmlFor="subtitle" className={labelClass}>
           Subtitle
         </label>
@@ -244,10 +273,16 @@ export function ItemForm({ item, from }: { item: Item; from?: string }) {
         <input
           id="creators"
           name="creators"
+          list="known-creators"
           value={creators}
           onChange={(e) => setCreators(e.target.value)}
           className={inputClass}
         />
+        <datalist id="known-creators">
+          {knownCreators.map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
       </div>
 
       <div className="flex flex-col gap-1">
@@ -275,6 +310,39 @@ export function ItemForm({ item, from }: { item: Item; from?: string }) {
             onChange={(e) => setIsbn(e.target.value)}
             className={inputClass}
           />
+        </div>
+      )}
+
+      {category === "book" && (
+        <div className="flex gap-3">
+          <div className="flex flex-col gap-1 flex-1">
+            <label htmlFor="series" className={labelClass}>
+              Series
+            </label>
+            <input
+              id="series"
+              name="series"
+              list="known-series"
+              defaultValue={item.series ?? ""}
+              className={inputClass}
+            />
+            <datalist id="known-series">
+              {knownSeries.map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+          </div>
+          <div className="flex flex-col gap-1 w-24">
+            <label htmlFor="seriesNumber" className={labelClass}>
+              Series #
+            </label>
+            <input
+              id="seriesNumber"
+              name="seriesNumber"
+              defaultValue={item.seriesNumber ?? ""}
+              className={inputClass}
+            />
+          </div>
         </div>
       )}
 

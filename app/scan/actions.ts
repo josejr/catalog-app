@@ -90,6 +90,9 @@ export async function createItemAction(
   if (!rawTitle) return { error: "Title is required." };
   const title = toTitleCase(rawTitle);
 
+  const rawSortTitle = String(formData.get("sortTitle") ?? "").trim();
+  const sortTitle = rawSortTitle ? toTitleCase(rawSortTitle) : null;
+
   const rawSubtitle = String(formData.get("subtitle") ?? "").trim();
   const subtitle = rawSubtitle ? toTitleCase(rawSubtitle) : null;
   const creators = String(formData.get("creators") ?? "").trim() || null;
@@ -98,6 +101,8 @@ export async function createItemAction(
   const notes = String(formData.get("notes") ?? "").trim() || null;
   const barcode = String(formData.get("barcode") ?? "").trim() || null;
   const isbn = String(formData.get("isbn") ?? "").trim() || null;
+  const series = String(formData.get("series") ?? "").trim() || null;
+  const seriesNumber = String(formData.get("seriesNumber") ?? "").trim() || null;
   const metadataSource = String(formData.get("metadataSource") ?? "").trim() || null;
 
   let rawMetadata: unknown = null;
@@ -115,7 +120,10 @@ export async function createItemAction(
     formats,
     barcode,
     isbn,
+    series,
+    seriesNumber,
     title,
+    sortTitle,
     subtitle,
     creators,
     year,

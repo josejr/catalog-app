@@ -8,7 +8,7 @@ import { getFormatColors } from "@/lib/format-colors";
 import { PreferenceLink } from "./preference-link";
 import { CoverImage } from "./cover-image";
 import { toggleFavoriteAction } from "./items/[id]/actions";
-import { and, arrayOverlaps, asc, desc, eq, ilike, inArray, or } from "drizzle-orm";
+import { and, arrayOverlaps, asc, desc, eq, ilike, inArray, or, sql, type AnyColumn, type SQL } from "drizzle-orm";
 
 function isCategory(value: string): value is Category {
   return (categories as readonly string[]).includes(value);
@@ -19,10 +19,11 @@ type SortField = (typeof sortFields)[number];
 
 const sortFieldConfig: Record<
   SortField,
-  { label: string; column: typeof items.createdAt | typeof items.title | typeof items.year; defaultDir: "asc" | "desc" }
+  { label: string; column: AnyColumn | SQL; defaultDir: "asc" | "desc" }
 > = {
   createdAt: { label: "Date Added", column: items.createdAt, defaultDir: "desc" },
-  title: { label: "Title", column: items.title, defaultDir: "asc" },
+  // Falls back to the display title for items with no sort title set.
+  title: { label: "Title", column: sql`coalesce(${items.sortTitle}, ${items.title})`, defaultDir: "asc" },
   year: { label: "Year", column: items.year, defaultDir: "asc" },
 };
 
@@ -161,7 +162,7 @@ export default async function Home({
     where: conditions.length ? and(...conditions) : undefined,
     orderBy: orderFn(sortFieldConfig[sortField].column),
   });
-  const formatColors = viewMode === "grid" ? await getFormatColors() : undefined;
+  const formatColors = await getFormatColors();
 
   function hrefFor(overrides: {
     category?: string | null;
@@ -211,11 +212,6 @@ export default async function Home({
   // return here with the same filters instead of resetting to "/".
   const catalogHref = hrefFor({});
   const itemHref = (itemId: string) => `/items/${itemId}?from=${encodeURIComponent(catalogHref)}`;
-
-  function categoryBadge(item: { category: string; formats: string[] }): string {
-    const label = categoryLabels[item.category as Category] ?? item.category;
-    return item.formats.length ? `${label} · ${item.formats.map(formatLabel).join(", ")}` : label;
-  }
 
   const filterLinkClass = (isActive: boolean) =>
     isActive
@@ -476,7 +472,7 @@ export default async function Home({
               <div className="flex flex-col gap-1 min-w-0">
                 <Link
                   href={itemHref(item.id)}
-                  className="text-sm font-medium truncate hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+                  className="text-sm font-medium hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
                 >
                   {item.title}
                 </Link>
@@ -493,6 +489,12 @@ export default async function Home({
                     ))}
                   </div>
                 )}
+                {item.series && (
+                  <p className="text-xs text-neutral-500 truncate">
+                    {item.series}
+                    {item.seriesNumber && `, #${item.seriesNumber}`}
+                  </p>
+                )}
               </div>
             </li>
           ))}
@@ -502,21 +504,42 @@ export default async function Home({
           {catalogItems.map((item) => (
             <li
               key={item.id}
-              className="flex gap-4 rounded-xl border border-neutral-200 dark:border-neutral-800 p-3 bg-white/60 dark:bg-neutral-900/40 shadow-sm hover:shadow-md hover:border-neutral-300 dark:hover:border-neutral-700 transition-all"
+              className="relative flex gap-4 rounded-xl border border-neutral-200 dark:border-neutral-800 p-3 bg-white/60 dark:bg-neutral-900/40 shadow-sm hover:shadow-md hover:border-neutral-300 dark:hover:border-neutral-700 transition-all"
             >
-              {item.coverImageUrl ? (
-                <CoverImage
-                  src={item.coverImageUrl}
-                  alt={item.title}
-                  className="w-12 h-16 object-cover rounded-md shrink-0 bg-neutral-100 dark:bg-neutral-900"
-                />
-              ) : (
-                <div className="w-12 h-16 rounded-md shrink-0 bg-neutral-100 dark:bg-neutral-900" />
-              )}
-              <div className="flex flex-col gap-0.5 min-w-0">
+              <form action={toggleFavoriteAction.bind(null, item.id)} className="absolute top-2 right-2">
+                <button
+                  type="submit"
+                  aria-label={item.favorites.length > 0 ? "Remove from favorites" : "Add to favorites"}
+                  className={`text-lg leading-none ${
+                    item.favorites.length > 0
+                      ? "text-amber-500"
+                      : "text-neutral-300 dark:text-neutral-700 hover:text-amber-500"
+                  } transition-colors`}
+                >
+                  {item.favorites.length > 0 ? "★" : "☆"}
+                </button>
+              </form>
+              <div className="flex flex-col items-center gap-1.5 shrink-0">
+                {item.coverImageUrl ? (
+                  <CoverImage
+                    src={item.coverImageUrl}
+                    alt={item.title}
+                    className="w-12 h-16 object-cover rounded-md bg-neutral-100 dark:bg-neutral-900"
+                  />
+                ) : (
+                  <div className="w-12 h-16 rounded-md bg-neutral-100 dark:bg-neutral-900" />
+                )}
+                <Link
+                  href={`/items/${item.id}/edit?from=${encodeURIComponent(catalogHref)}`}
+                  className="underline text-xs text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-300 transition-colors"
+                >
+                  Edit
+                </Link>
+              </div>
+              <div className="flex flex-col gap-0.5 min-w-0 pr-8">
                 <div className="flex items-center gap-2">
                   <span className="text-xs uppercase tracking-wide text-neutral-500">
-                    {categoryBadge(item)}
+                    {categoryLabels[item.category as Category] ?? item.category}
                   </span>
                   {item.year && (
                     <span className="text-xs text-neutral-500">
@@ -530,6 +553,19 @@ export default async function Home({
                 >
                   {item.title}
                 </Link>
+                {item.formats.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {item.formats.map((format) => (
+                      <span
+                        key={format}
+                        className="rounded-full px-1.5 py-0.5 text-[10px] font-medium text-white"
+                        style={{ backgroundColor: formatColors?.[format] }}
+                      >
+                        {formatLabel(format)}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {item.addedBy?.name && (
                   <span className="text-xs text-neutral-500 truncate">
                     Added by {item.addedBy.name}
@@ -545,27 +581,6 @@ export default async function Home({
                     {item.creators}
                   </span>
                 )}
-              </div>
-              <div className="flex items-center gap-3 shrink-0 self-start">
-                <form action={toggleFavoriteAction.bind(null, item.id)}>
-                  <button
-                    type="submit"
-                    aria-label={item.favorites.length > 0 ? "Remove from favorites" : "Add to favorites"}
-                    className={`text-lg leading-none ${
-                      item.favorites.length > 0
-                        ? "text-amber-500"
-                        : "text-neutral-300 dark:text-neutral-700 hover:text-amber-500"
-                    } transition-colors`}
-                  >
-                    {item.favorites.length > 0 ? "★" : "☆"}
-                  </button>
-                </form>
-                <Link
-                  href={`/items/${item.id}/edit?from=${encodeURIComponent(catalogHref)}`}
-                  className="underline text-sm text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-300 transition-colors"
-                >
-                  Edit
-                </Link>
               </div>
             </li>
           ))}

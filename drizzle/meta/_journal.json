@@ -57,6 +57,20 @@
       "when": 1785346721404,
       "tag": "0007_vengeful_human_robot",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785352767478,
+      "tag": "0008_mysterious_warstar",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785353225151,
+      "tag": "0009_volatile_namor",
+      "breakpoints": true
     }
   ]
 }

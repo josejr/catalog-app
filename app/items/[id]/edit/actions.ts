@@ -174,6 +174,7 @@ export async function updateItemAction(
   const title = String(formData.get("title") ?? "").trim();
   if (!title) return { error: "Title is required." };
 
+  const sortTitle = String(formData.get("sortTitle") ?? "").trim() || null;
   const subtitle = String(formData.get("subtitle") ?? "").trim() || null;
   const creators = String(formData.get("creators") ?? "").trim() || null;
   const year = String(formData.get("year") ?? "").trim() || null;
@@ -181,6 +182,8 @@ export async function updateItemAction(
   const notes = String(formData.get("notes") ?? "").trim() || null;
   const barcode = String(formData.get("barcode") ?? "").trim() || null;
   const isbn = String(formData.get("isbn") ?? "").trim() || null;
+  const series = String(formData.get("series") ?? "").trim() || null;
+  const seriesNumber = String(formData.get("seriesNumber") ?? "").trim() || null;
   const from = String(formData.get("from") ?? "").trim();
   const redirectTo = from.startsWith("/") && !from.startsWith("//") ? from : "/";
 
@@ -191,7 +194,10 @@ export async function updateItemAction(
       formats,
       barcode,
       isbn,
+      series,
+      seriesNumber,
       title,
+      sortTitle,
       subtitle,
       creators,
       year,

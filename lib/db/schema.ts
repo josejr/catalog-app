@@ -30,7 +30,10 @@ export const items = pgTable("items", {
   formats: text("formats").array().notNull().default([]),
   barcode: varchar("barcode", { length: 32 }),
   isbn: varchar("isbn", { length: 20 }),
+  series: text("series"),
+  seriesNumber: varchar("series_number", { length: 20 }), // free text - "1", "2.5", "1-3", etc.
   title: text("title").notNull(),
+  sortTitle: text("sort_title"), // optional override used for the Title sort (e.g. "Hobbit, The")
   subtitle: text("subtitle"),
   creators: text("creators"), // authors / artists / directors, free text
   year: varchar("year", { length: 4 }),

@@ -117,6 +117,11 @@ export default async function ItemDetailPage({
   const fileSize = formatFileSize(part?.size);
   const categoryLabel = categoryLabels[item.category as Category] ?? item.category;
   const formatsLabel = item.formats.length ? item.formats.map(formatLabel).join(", ") : undefined;
+  const seriesLabel = item.series
+    ? item.seriesNumber
+      ? `${item.series} #${item.seriesNumber}`
+      : item.series
+    : undefined;
 
   const favoriteButton = (
     <form action={toggleFavoriteAction.bind(null, item.id)}>
@@ -241,6 +246,7 @@ export default async function ItemDetailPage({
             </div>
             {item.subtitle && <p className="text-neutral-500">{item.subtitle}</p>}
             {item.creators && <p className="text-sm text-neutral-500">{item.creators}</p>}
+            {seriesLabel && <p className="text-sm text-neutral-500">{seriesLabel}</p>}
           </div>
         </div>
 
@@ -317,6 +323,7 @@ export default async function ItemDetailPage({
             </div>
             {item.subtitle && <p className="text-lg text-neutral-500">{item.subtitle}</p>}
             {item.creators && <p className="text-sm text-neutral-500">{item.creators}</p>}
+            {seriesLabel && <p className="text-sm text-neutral-500">{seriesLabel}</p>}
             {plexDetail?.tagline && (
               <p className="text-sm italic text-neutral-500">{plexDetail.tagline}</p>
             )}

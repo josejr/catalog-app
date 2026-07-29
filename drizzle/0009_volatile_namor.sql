@@ -1,0 +1,1 @@
+ALTER TABLE "items" ADD COLUMN "sort_title" text;
