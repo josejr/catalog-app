@@ -5,10 +5,19 @@ import Link from "next/link";
 import { mediaTypes } from "@/lib/db/schema";
 import { mediaTypeLabels } from "@/lib/media-types";
 import {
+  lookupMusicBrainzForItemAction,
   lookupOmdbForItemAction,
+  lookupOpenLibraryForItemAction,
   updateItemAction,
   type UpdateItemState,
 } from "./actions";
+
+const metadataSourceByMediaType: Record<string, { label: string; action: typeof lookupOmdbForItemAction }> = {
+  book: { label: "Open Library", action: lookupOpenLibraryForItemAction },
+  cd: { label: "MusicBrainz", action: lookupMusicBrainzForItemAction },
+  dvd: { label: "OMDb", action: lookupOmdbForItemAction },
+  bluray: { label: "OMDb", action: lookupOmdbForItemAction },
+};
 
 const initialState: UpdateItemState = {};
 
@@ -39,15 +48,18 @@ export function ItemForm({ item }: { item: Item }) {
   const [creators, setCreators] = useState(item.creators ?? "");
   const [year, setYear] = useState(item.year ?? "");
   const [coverImageUrl, setCoverImageUrl] = useState(item.coverImageUrl ?? "");
-  const [omdbError, setOmdbError] = useState<string | undefined>();
-  const [omdbPending, startOmdbLookup] = useTransition();
+  const [lookupError, setLookupError] = useState<string | undefined>();
+  const [lookupPending, startLookup] = useTransition();
 
-  function fetchFromOmdb() {
-    setOmdbError(undefined);
-    startOmdbLookup(async () => {
-      const result = await lookupOmdbForItemAction(title, year);
+  const metadataSource = metadataSourceByMediaType[mediaType];
+
+  function fetchMetadata() {
+    if (!metadataSource) return;
+    setLookupError(undefined);
+    startLookup(async () => {
+      const result = await metadataSource.action(title, year, mediaType as "dvd" | "bluray");
       if (result.error) {
-        setOmdbError(result.error);
+        setLookupError(result.error);
         return;
       }
       if (result.result) {
@@ -147,16 +159,16 @@ export function ItemForm({ item }: { item: Item }) {
         />
       </div>
 
-      {mediaType === "dvd" && (
+      {metadataSource && (
         <div className="flex flex-col gap-2 border rounded p-3">
           <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={fetchFromOmdb}
-              disabled={omdbPending || !title.trim()}
+              onClick={fetchMetadata}
+              disabled={lookupPending || !title.trim()}
               className="rounded border px-3 py-1.5 text-sm font-medium disabled:opacity-50"
             >
-              {omdbPending ? "Fetching..." : "Fetch from OMDb"}
+              {lookupPending ? "Fetching..." : `Fetch from ${metadataSource.label}`}
             </button>
             {coverImageUrl && (
               // eslint-disable-next-line @next/next/no-img-element
@@ -167,7 +179,7 @@ export function ItemForm({ item }: { item: Item }) {
               />
             )}
           </div>
-          {omdbError && <p className="text-sm text-red-600">{omdbError}</p>}
+          {lookupError && <p className="text-sm text-red-600">{lookupError}</p>}
         </div>
       )}
 

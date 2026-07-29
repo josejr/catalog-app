@@ -20,7 +20,7 @@ export const users = pgTable("users", {
     .defaultNow(),
 });
 
-export const mediaTypes = ["book", "cd", "dvd", "digital", "other"] as const;
+export const mediaTypes = ["book", "cd", "dvd", "bluray", "digital", "other"] as const;
 export type MediaType = (typeof mediaTypes)[number];
 
 export const items = pgTable("items", {
@@ -58,3 +58,11 @@ export const itemsRelations = relations(items, ({ one }) => ({
 export const usersRelations = relations(users, ({ many }) => ({
   items: many(items),
 }));
+
+export const settings = pgTable("settings", {
+  key: varchar("key", { length: 100 }).primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});

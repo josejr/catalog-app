@@ -6,13 +6,18 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { items, mediaTypes, type MediaType } from "@/lib/db/schema";
-import { lookupOmdbByTitle } from "@/lib/metadata-lookup";
+import {
+  lookupMusicBrainzByTitle,
+  lookupOmdbByTitle,
+  lookupOpenLibraryByTitle,
+} from "@/lib/metadata-lookup";
+import { getSetting } from "@/lib/settings";
 
 export type UpdateItemState = {
   error?: string;
 };
 
-export type OmdbLookupState = {
+export type MetadataLookupState = {
   error?: string;
   result?: {
     title: string;
@@ -24,20 +29,66 @@ export type OmdbLookupState = {
 
 export async function lookupOmdbForItemAction(
   title: string,
-  year: string
-): Promise<OmdbLookupState> {
+  year: string,
+  mediaType: "dvd" | "bluray" = "dvd"
+): Promise<MetadataLookupState> {
   const session = await auth();
   if (!session?.user) return { error: "You must be signed in." };
 
-  if (!process.env.OMDB_API_KEY) {
-    return { error: "OMDb lookup isn't configured (missing OMDB_API_KEY)." };
+  const apiKey = (await getSetting("omdbApiKey")) || process.env.OMDB_API_KEY;
+  if (!apiKey) {
+    return { error: "OMDb lookup isn't configured. Add an API key on the Settings page." };
   }
 
   const trimmedTitle = title.trim();
   if (!trimmedTitle) return { error: "Enter a title first." };
 
-  const match = await lookupOmdbByTitle(trimmedTitle, year.trim() || undefined);
+  const match = await lookupOmdbByTitle(trimmedTitle, year.trim() || undefined, mediaType);
   if (!match) return { error: "No match found on OMDb." };
+
+  return {
+    result: {
+      title: match.title,
+      year: match.year,
+      creators: match.creators,
+      coverImageUrl: match.coverImageUrl,
+    },
+  };
+}
+
+export async function lookupOpenLibraryForItemAction(
+  title: string
+): Promise<MetadataLookupState> {
+  const session = await auth();
+  if (!session?.user) return { error: "You must be signed in." };
+
+  const trimmedTitle = title.trim();
+  if (!trimmedTitle) return { error: "Enter a title first." };
+
+  const match = await lookupOpenLibraryByTitle(trimmedTitle);
+  if (!match) return { error: "No match found on Open Library." };
+
+  return {
+    result: {
+      title: match.title,
+      year: match.year,
+      creators: match.creators,
+      coverImageUrl: match.coverImageUrl,
+    },
+  };
+}
+
+export async function lookupMusicBrainzForItemAction(
+  title: string
+): Promise<MetadataLookupState> {
+  const session = await auth();
+  if (!session?.user) return { error: "You must be signed in." };
+
+  const trimmedTitle = title.trim();
+  if (!trimmedTitle) return { error: "Enter a title first." };
+
+  const match = await lookupMusicBrainzByTitle(trimmedTitle);
+  if (!match) return { error: "No match found on MusicBrainz." };
 
   return {
     result: {
