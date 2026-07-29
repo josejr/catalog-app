@@ -6,10 +6,14 @@ import { ItemForm } from "./item-form";
 
 export default async function EditItemPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ from?: string }>;
 }) {
   const { id } = await params;
+  const { from } = await searchParams;
+  const backHref = from && from.startsWith("/") && !from.startsWith("//") ? from : undefined;
 
   const item = await db.query.items.findFirst({ where: eq(items.id, id) });
   if (!item) notFound();
@@ -17,7 +21,7 @@ export default async function EditItemPage({
   return (
     <div className="flex-1 p-6 flex flex-col gap-6 max-w-sm">
       <h1 className="text-2xl font-semibold">Edit item</h1>
-      <ItemForm item={item} />
+      <ItemForm item={item} from={backHref} />
     </div>
   );
 }

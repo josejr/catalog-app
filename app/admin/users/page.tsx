@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { users } from "@/lib/db/schema";
+import { EditNameForm } from "./edit-name-form";
 import { UserForm } from "./user-form";
 
 export default async function AdminUsersPage() {
@@ -27,8 +28,8 @@ export default async function AdminUsersPage() {
         <h1 className="text-2xl font-semibold mb-4">Household members</h1>
         <ul className="flex flex-col gap-2">
           {householdMembers.map((member) => (
-            <li key={member.id} className="flex gap-3 text-sm">
-              <span className="font-medium">{member.name}</span>
+            <li key={member.id} className="flex items-center gap-3 text-sm">
+              <EditNameForm userId={member.id} name={member.name} />
               <span className="text-neutral-500">{member.email}</span>
               <span className="text-neutral-500">{member.role}</span>
             </li>

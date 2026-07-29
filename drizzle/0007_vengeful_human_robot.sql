@@ -1,0 +1,1 @@
+ALTER TABLE "items" ADD COLUMN "isbn" varchar(20);

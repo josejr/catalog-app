@@ -1,7 +1,15 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNotNull } from "drizzle-orm";
 import { db } from "../db";
-import { items, users } from "../db/schema";
-import { getAllMoviesInSection, plexCoverUrl, PLEX_METADATA_SOURCE, type PlexMovie } from "../plex";
+import { items, plexWatchEvents, users } from "../db/schema";
+import {
+  getAllMoviesInSection,
+  getPlexAccountNames,
+  getWatchHistoryForSection,
+  historyEventId,
+  plexCoverUrl,
+  PLEX_METADATA_SOURCE,
+  type PlexMovie,
+} from "../plex";
 
 type PlexFields = {
   title: string;
@@ -37,6 +45,39 @@ function hasChanged(
   );
 }
 
+async function syncWatchHistory(sectionKey: string, itemIdByRatingKey: Map<string, string>) {
+  const [accountNames, history, existingRows] = await Promise.all([
+    getPlexAccountNames(),
+    getWatchHistoryForSection(sectionKey),
+    db.select({ plexHistoryKey: plexWatchEvents.plexHistoryKey }).from(plexWatchEvents),
+  ]);
+  const existingEventIds = new Set(existingRows.map((row) => row.plexHistoryKey));
+
+  let inserted = 0;
+  let skippedNoItem = 0;
+
+  for (const event of history) {
+    const eventId = historyEventId(event.historyKey);
+    if (existingEventIds.has(eventId)) continue;
+
+    const itemId = itemIdByRatingKey.get(event.ratingKey);
+    if (!itemId) {
+      skippedNoItem++;
+      continue;
+    }
+
+    await db.insert(plexWatchEvents).values({
+      itemId,
+      plexHistoryKey: eventId,
+      viewedAt: new Date(event.viewedAt * 1000),
+      watchedBy: accountNames.get(event.accountID) ?? null,
+    });
+    inserted++;
+  }
+
+  return { inserted, total: history.length, skippedNoItem };
+}
+
 async function main() {
   const serverUrl = process.env.PLEX_SERVER_URL;
   const token = process.env.PLEX_TOKEN;
@@ -57,9 +98,15 @@ async function main() {
 
   const movies = await getAllMoviesInSection(sectionKey);
 
-  const existingRows = await db.select().from(items).where(eq(items.mediaType, "digital"));
+  const existingRows = await db
+    .select()
+    .from(items)
+    .where(and(eq(items.category, "movie"), isNotNull(items.plexRatingKey)));
   const byRatingKey = new Map(
     existingRows.filter((row) => row.plexRatingKey).map((row) => [row.plexRatingKey as string, row])
+  );
+  const itemIdByRatingKey = new Map(
+    existingRows.filter((row) => row.plexRatingKey).map((row) => [row.plexRatingKey as string, row.id])
   );
 
   let inserted = 0;
@@ -71,16 +118,21 @@ async function main() {
     const existing = byRatingKey.get(movie.ratingKey);
 
     if (!existing) {
-      await db.insert(items).values({
-        mediaType: "digital",
-        plexRatingKey: movie.ratingKey,
-        subtitle: null,
-        barcode: null,
-        notes: null,
-        metadataSource: PLEX_METADATA_SOURCE,
-        addedByUserId: adminUser.id,
-        ...fields,
-      });
+      const [newItem] = await db
+        .insert(items)
+        .values({
+          category: "movie",
+          formats: ["digital"],
+          plexRatingKey: movie.ratingKey,
+          subtitle: null,
+          barcode: null,
+          notes: null,
+          metadataSource: PLEX_METADATA_SOURCE,
+          addedByUserId: adminUser.id,
+          ...fields,
+        })
+        .returning({ id: items.id });
+      itemIdByRatingKey.set(movie.ratingKey, newItem.id);
       inserted++;
     } else if (hasChanged(existing, fields)) {
       await db
@@ -101,6 +153,12 @@ async function main() {
   console.log(
     `Plex sync: ${inserted} inserted, ${updated} updated, ${unchanged} unchanged, ${movies.length} total.`
   );
+
+  const historyResult = await syncWatchHistory(sectionKey, itemIdByRatingKey);
+  console.log(
+    `Watch history: ${historyResult.inserted} new events imported (${historyResult.total} total in Plex, ${historyResult.skippedNoItem} skipped for items not in catalog).`
+  );
+
   process.exit(0);
 }
 

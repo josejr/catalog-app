@@ -2,21 +2,70 @@
 
 import { useActionState, useState, useTransition } from "react";
 import Link from "next/link";
-import { mediaTypes } from "@/lib/db/schema";
-import { mediaTypeLabels } from "@/lib/media-types";
+import { categoryFormats, categoryLabels, formatLabel } from "@/lib/categories";
+import { categories, type Category } from "@/lib/db/schema";
 import {
-  lookupMusicBrainzForItemAction,
-  lookupOmdbForItemAction,
-  lookupOpenLibraryForItemAction,
+  searchHardcoverAction,
+  searchItunesAction,
+  searchMusicBrainzAction,
+  searchOmdbAction,
+  searchOpenLibraryAction,
+  searchTmdbAction,
+  selectOmdbAction,
+  selectTmdbAction,
   updateItemAction,
+  type MetadataLookupState,
+  type SearchState,
   type UpdateItemState,
 } from "./actions";
 
-const metadataSourceByMediaType: Record<string, { label: string; action: typeof lookupOmdbForItemAction }> = {
-  book: { label: "Open Library", action: lookupOpenLibraryForItemAction },
-  cd: { label: "MusicBrainz", action: lookupMusicBrainzForItemAction },
-  dvd: { label: "OMDb", action: lookupOmdbForItemAction },
-  bluray: { label: "OMDb", action: lookupOmdbForItemAction },
+type LookupCandidate = NonNullable<SearchState["candidates"]>[number];
+
+type MetadataSource = {
+  key: string;
+  label: string;
+  search: (title: string, year: string, isbn: string) => Promise<SearchState>;
+  select?: (id: string, format: "dvd" | "bluray") => Promise<MetadataLookupState>;
+  // Only the cover image is applied from this source's matches — used for
+  // iTunes, whose title/artist matching is much less reliable than the
+  // category-specific sources, so it shouldn't touch text fields.
+  coverOnly?: boolean;
+};
+
+const metadataSourcesByCategory: Record<string, MetadataSource[]> = {
+  book: [
+    { key: "openlibrary", label: "Open Library", search: (title) => searchOpenLibraryAction(title) },
+    {
+      key: "hardcover",
+      label: "Hardcover",
+      search: (title, _year, isbn) => searchHardcoverAction(title, isbn),
+    },
+    {
+      key: "itunes",
+      label: "iTunes (cover)",
+      search: (title) => searchItunesAction(title, "book"),
+      coverOnly: true,
+    },
+  ],
+  music: [
+    { key: "musicbrainz", label: "MusicBrainz", search: (title) => searchMusicBrainzAction(title) },
+    {
+      key: "itunes",
+      label: "iTunes (cover)",
+      search: (title) => searchItunesAction(title, "music"),
+      coverOnly: true,
+    },
+  ],
+  movie: [
+    { key: "omdb", label: "OMDb", search: searchOmdbAction, select: selectOmdbAction },
+    { key: "tmdb", label: "TMDB", search: searchTmdbAction, select: selectTmdbAction },
+    {
+      key: "itunes",
+      label: "iTunes (cover)",
+      search: (title) => searchItunesAction(title, "movie"),
+      coverOnly: true,
+    },
+  ],
 };
 
 const initialState: UpdateItemState = {};
@@ -26,73 +75,141 @@ const labelClass = "text-sm font-medium";
 
 type Item = {
   id: string;
-  mediaType: string;
+  category: string;
+  formats: string[];
   title: string;
   subtitle: string | null;
   creators: string | null;
   year: string | null;
   coverImageUrl: string | null;
   barcode: string | null;
+  isbn: string | null;
   notes: string | null;
 };
 
-export function ItemForm({ item }: { item: Item }) {
+export function ItemForm({ item, from }: { item: Item; from?: string }) {
   const updateItemWithId = updateItemAction.bind(null, item.id);
   const [state, formAction, pending] = useActionState(
     updateItemWithId,
     initialState
   );
 
-  const [mediaType, setMediaType] = useState(item.mediaType);
+  const [category, setCategory] = useState(item.category);
+  const [formats, setFormats] = useState<string[]>(item.formats);
   const [title, setTitle] = useState(item.title);
   const [creators, setCreators] = useState(item.creators ?? "");
   const [year, setYear] = useState(item.year ?? "");
   const [coverImageUrl, setCoverImageUrl] = useState(item.coverImageUrl ?? "");
+  const [isbn, setIsbn] = useState(item.isbn ?? "");
   const [lookupError, setLookupError] = useState<string | undefined>();
+  const [activeSource, setActiveSource] = useState<MetadataSource | undefined>();
+  const [candidates, setCandidates] = useState<LookupCandidate[] | undefined>();
   const [lookupPending, startLookup] = useTransition();
 
-  const metadataSource = metadataSourceByMediaType[mediaType];
+  const metadataSources = metadataSourcesByCategory[category] ?? [];
+  const availableFormats = categoryFormats[category as Category] ?? [];
+  const format = formats.includes("bluray") ? "bluray" : "dvd";
 
-  function fetchMetadata() {
-    if (!metadataSource) return;
-    setLookupError(undefined);
+  function applyMatch(match: NonNullable<MetadataLookupState["result"]>, coverOnly?: boolean) {
+    // An explicit pick from the search results, so it's fine to overwrite
+    // fields that already have something in them — unlike a silent
+    // background fill, the user just chose this match on purpose. A
+    // coverOnly source (iTunes) only ever touches the cover image.
+    if (!coverOnly) {
+      setTitle(match.title);
+      if (match.year !== undefined) setYear(match.year);
+      if (match.creators !== undefined) setCreators(match.creators);
+      if (match.isbn !== undefined) setIsbn(match.isbn);
+    }
+    if (match.coverImageUrl !== undefined) setCoverImageUrl(match.coverImageUrl);
+    setCandidates(undefined);
+    setActiveSource(undefined);
+  }
+
+  function runSearch(source: MetadataSource) {
     startLookup(async () => {
-      const result = await metadataSource.action(title, year, mediaType as "dvd" | "bluray");
+      setLookupError(undefined);
+      setCandidates(undefined);
+      setActiveSource(source);
+      const result = await source.search(title, year, isbn);
       if (result.error) {
         setLookupError(result.error);
         return;
       }
-      if (result.result) {
-        setTitle(result.result.title);
-        if (result.result.year) setYear(result.result.year);
-        if (result.result.creators) setCreators(result.result.creators);
-        if (result.result.coverImageUrl) setCoverImageUrl(result.result.coverImageUrl);
+      setCandidates(result.candidates);
+    });
+  }
+
+  function pickCandidate(source: MetadataSource, candidate: LookupCandidate) {
+    if (candidate.result) {
+      applyMatch(candidate.result, source.coverOnly);
+      return;
+    }
+    if (!source.select) return;
+    startLookup(async () => {
+      setLookupError(undefined);
+      const result = await source.select!(candidate.id, format);
+      if (result.error) {
+        setLookupError(result.error);
+        return;
       }
+      if (result.result) applyMatch(result.result, source.coverOnly);
     });
   }
 
   return (
     <form action={formAction} className="flex flex-col gap-4 max-w-sm">
+      {from && <input type="hidden" name="from" value={from} />}
       {state.error && <p className="text-sm text-red-600">{state.error}</p>}
 
       <div className="flex flex-col gap-1">
-        <label htmlFor="mediaType" className={labelClass}>
-          Media type
+        <label htmlFor="category" className={labelClass}>
+          Category
         </label>
         <select
-          id="mediaType"
-          name="mediaType"
-          value={mediaType}
-          onChange={(e) => setMediaType(e.target.value)}
+          id="category"
+          name="category"
+          value={category}
+          onChange={(e) => {
+            setCategory(e.target.value);
+            setFormats([]);
+            setCandidates(undefined);
+            setActiveSource(undefined);
+            setLookupError(undefined);
+          }}
           className={inputClass}
         >
-          {mediaTypes.map((type) => (
-            <option key={type} value={type}>
-              {mediaTypeLabels[type]}
+          {categories.map((cat) => (
+            <option key={cat} value={cat}>
+              {categoryLabels[cat]}
             </option>
           ))}
         </select>
       </div>
+
+      {availableFormats.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <span className={labelClass}>Formats</span>
+          <div className="flex flex-wrap gap-3">
+            {availableFormats.map((format) => (
+              <label key={format} className="flex items-center gap-1.5 text-sm">
+                <input
+                  type="checkbox"
+                  name="formats"
+                  value={format}
+                  checked={formats.includes(format)}
+                  onChange={(e) => {
+                    setFormats((prev) =>
+                      e.target.checked ? [...prev, format] : prev.filter((f) => f !== format)
+                    );
+                  }}
+                />
+                {formatLabel(format)}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-col gap-1">
         <label htmlFor="title" className={labelClass}>
@@ -146,6 +263,21 @@ export function ItemForm({ item }: { item: Item }) {
         />
       </div>
 
+      {category === "book" && (
+        <div className="flex flex-col gap-1">
+          <label htmlFor="isbn" className={labelClass}>
+            ISBN
+          </label>
+          <input
+            id="isbn"
+            name="isbn"
+            value={isbn}
+            onChange={(e) => setIsbn(e.target.value)}
+            className={inputClass}
+          />
+        </div>
+      )}
+
       <div className="flex flex-col gap-1">
         <label htmlFor="coverImageUrl" className={labelClass}>
           Cover image URL
@@ -159,27 +291,75 @@ export function ItemForm({ item }: { item: Item }) {
         />
       </div>
 
-      {metadataSource && (
+      {metadataSources.length > 0 && (
         <div className="flex flex-col gap-2 border rounded p-3">
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={fetchMetadata}
-              disabled={lookupPending || !title.trim()}
-              className="rounded border px-3 py-1.5 text-sm font-medium disabled:opacity-50"
-            >
-              {lookupPending ? "Fetching..." : `Fetch from ${metadataSource.label}`}
-            </button>
+          <div className="flex items-center gap-3 flex-wrap">
+            {metadataSources.map((source) => (
+              <button
+                key={source.key}
+                type="button"
+                onClick={() => runSearch(source)}
+                disabled={lookupPending || (!title.trim() && !isbn.trim())}
+                className="rounded border px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+              >
+                {lookupPending && activeSource?.key === source.key
+                  ? "Searching..."
+                  : `Search ${source.label}`}
+              </button>
+            ))}
             {coverImageUrl && (
               // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={coverImageUrl}
-                alt=""
-                className="h-16 w-auto rounded border"
-              />
+              <img src={coverImageUrl} alt="" className="h-16 w-auto rounded border" />
             )}
           </div>
           {lookupError && <p className="text-sm text-red-600">{lookupError}</p>}
+          {candidates && activeSource && (
+            <div className="flex flex-col gap-1">
+              {candidates.length === 0 ? (
+                <p className="text-sm text-neutral-500">No matches found.</p>
+              ) : (
+                <ul className="flex flex-col gap-1 max-h-72 overflow-y-auto">
+                  {candidates.map((candidate) => (
+                    <li key={candidate.id}>
+                      <button
+                        type="button"
+                        onClick={() => pickCandidate(activeSource, candidate)}
+                        disabled={lookupPending}
+                        className="flex items-center gap-3 w-full text-left rounded border px-2 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-900 disabled:opacity-50 transition-colors"
+                      >
+                        {candidate.thumbnailUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={candidate.thumbnailUrl}
+                            alt=""
+                            className="h-12 w-9 object-cover rounded shrink-0 bg-neutral-100 dark:bg-neutral-900"
+                          />
+                        ) : (
+                          <div className="h-12 w-9 rounded shrink-0 bg-neutral-100 dark:bg-neutral-900" />
+                        )}
+                        <span className="text-sm min-w-0">
+                          <span className="block truncate">{candidate.title}</span>
+                          {candidate.year && (
+                            <span className="text-neutral-500">{candidate.year}</span>
+                          )}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setCandidates(undefined);
+                  setActiveSource(undefined);
+                }}
+                className="self-start text-sm underline text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-300 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -215,7 +395,7 @@ export function ItemForm({ item }: { item: Item }) {
         >
           {pending ? "Saving..." : "Save changes"}
         </button>
-        <Link href="/" className="underline text-sm">
+        <Link href={from || "/"} className="underline text-sm">
           Cancel
         </Link>
       </div>

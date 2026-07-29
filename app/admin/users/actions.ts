@@ -1,6 +1,7 @@
 "use server";
 
 import { hash } from "bcryptjs";
+import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -35,4 +36,23 @@ export async function createUserAction(
   }
 
   revalidatePath("/admin/users");
+}
+
+export async function updateUserNameAction(
+  userId: string,
+  _prevState: string | undefined,
+  formData: FormData
+): Promise<string | undefined> {
+  const session = await auth();
+  if (session?.user.role !== "admin") {
+    return "Only admins can edit household members.";
+  }
+
+  const name = String(formData.get("name") ?? "").trim();
+  if (!name) return "Name is required.";
+
+  await db.update(users).set({ name }).where(eq(users.id, userId));
+
+  revalidatePath("/admin/users");
+  revalidatePath("/");
 }

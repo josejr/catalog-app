@@ -3,14 +3,16 @@
 import { revalidatePath } from "next/cache";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
+import { categoryFormats } from "@/lib/categories";
 import { db } from "@/lib/db";
-import { items, mediaTypes, type MediaType } from "@/lib/db/schema";
+import { categories, items, type Category } from "@/lib/db/schema";
 import { lookupBarcode, type LookupResult } from "@/lib/metadata-lookup";
+import { toTitleCase } from "@/lib/text";
 
 export type ExistingItemSummary = {
   id: string;
   title: string;
-  mediaType: MediaType;
+  category: Category;
   year: string | null;
 };
 
@@ -19,7 +21,7 @@ async function findExistingByBarcode(
 ): Promise<ExistingItemSummary | undefined> {
   const existing = await db.query.items.findFirst({
     where: eq(items.barcode, barcode),
-    columns: { id: true, title: true, mediaType: true, year: true },
+    columns: { id: true, title: true, category: true, year: true },
   });
   return existing as ExistingItemSummary | undefined;
 }
@@ -75,20 +77,27 @@ export async function createItemAction(
   const session = await auth();
   if (!session?.user) return { error: "You must be signed in." };
 
-  const mediaType = formData.get("mediaType");
-  if (typeof mediaType !== "string" || !mediaTypes.includes(mediaType as MediaType)) {
-    return { error: "Invalid media type." };
+  const category = formData.get("category");
+  if (typeof category !== "string" || !categories.includes(category as Category)) {
+    return { error: "Invalid category." };
   }
+  const validFormats = categoryFormats[category as Category];
+  const formats = formData
+    .getAll("formats")
+    .filter((f): f is string => typeof f === "string" && validFormats.includes(f));
 
-  const title = String(formData.get("title") ?? "").trim();
-  if (!title) return { error: "Title is required." };
+  const rawTitle = String(formData.get("title") ?? "").trim();
+  if (!rawTitle) return { error: "Title is required." };
+  const title = toTitleCase(rawTitle);
 
-  const subtitle = String(formData.get("subtitle") ?? "").trim() || null;
+  const rawSubtitle = String(formData.get("subtitle") ?? "").trim();
+  const subtitle = rawSubtitle ? toTitleCase(rawSubtitle) : null;
   const creators = String(formData.get("creators") ?? "").trim() || null;
   const year = String(formData.get("year") ?? "").trim() || null;
   const coverImageUrl = String(formData.get("coverImageUrl") ?? "").trim() || null;
   const notes = String(formData.get("notes") ?? "").trim() || null;
   const barcode = String(formData.get("barcode") ?? "").trim() || null;
+  const isbn = String(formData.get("isbn") ?? "").trim() || null;
   const metadataSource = String(formData.get("metadataSource") ?? "").trim() || null;
 
   let rawMetadata: unknown = null;
@@ -102,8 +111,10 @@ export async function createItemAction(
   }
 
   await db.insert(items).values({
-    mediaType,
+    category,
+    formats,
     barcode,
+    isbn,
     title,
     subtitle,
     creators,

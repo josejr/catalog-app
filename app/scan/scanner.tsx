@@ -8,8 +8,8 @@ import {
   useTransition,
 } from "react";
 import type { IScannerControls } from "@zxing/browser";
-import { mediaTypes, type MediaType } from "@/lib/db/schema";
-import { mediaTypeLabels } from "@/lib/media-types";
+import { categoryFormats, categoryLabels, formatLabel } from "@/lib/categories";
+import { categories, type Category } from "@/lib/db/schema";
 import {
   checkExistingItemAction,
   createItemAction,
@@ -21,13 +21,15 @@ import {
 const initialCreateItemState: CreateItemState = {};
 
 type ReviewData = {
-  mediaType: MediaType;
+  category: Category;
+  formats: string[];
   title: string;
   subtitle: string;
   creators: string;
   year: string;
   coverImageUrl: string;
   barcode: string;
+  isbn: string;
   metadataSource: string;
   rawMetadata: string;
   notice?: string;
@@ -36,13 +38,15 @@ type ReviewData = {
 
 function emptyReview(barcode = ""): ReviewData {
   return {
-    mediaType: "book",
+    category: "book",
+    formats: [],
     title: "",
     subtitle: "",
     creators: "",
     year: "",
     coverImageUrl: "",
     barcode,
+    isbn: "",
     metadataSource: "",
     rawMetadata: "",
   };
@@ -51,12 +55,12 @@ function emptyReview(barcode = ""): ReviewData {
 const inputClass = "border rounded px-3 py-2 bg-transparent";
 const labelClass = "text-sm font-medium";
 
-export function Scanner() {
+export function Scanner({ startBlank = false }: { startBlank?: boolean }) {
   const [mode, setMode] = useState<"scanning" | "manual" | "review" | "success">(
-    "scanning"
+    startBlank ? "review" : "scanning"
   );
   const [manualBarcode, setManualBarcode] = useState("");
-  const [review, setReview] = useState<ReviewData | null>(null);
+  const [review, setReview] = useState<ReviewData | null>(startBlank ? emptyReview() : null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [looking, startLookup] = useTransition();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -125,13 +129,15 @@ export function Scanner() {
       if ("result" in outcome) {
         const r = outcome.result;
         setReview({
-          mediaType: r.mediaType,
+          category: r.category,
+          formats: r.formats ?? [],
           title: r.title ?? "",
           subtitle: r.subtitle ?? "",
           creators: r.creators ?? "",
           year: r.year ?? "",
           coverImageUrl: r.coverImageUrl ?? "",
           barcode: r.barcode,
+          isbn: r.isbn ?? "",
           metadataSource: r.metadataSource,
           rawMetadata: r.rawMetadata ? JSON.stringify(r.rawMetadata) : "",
           existingItem: outcome.existingItem,
@@ -153,6 +159,11 @@ export function Scanner() {
       setReview({ ...emptyReview(barcode), existingItem });
       setMode("review");
     });
+  }
+
+  function handleBlankAdd() {
+    setReview(emptyReview());
+    setMode("review");
   }
 
   function reset() {
@@ -182,7 +193,7 @@ export function Scanner() {
         {review.existingItem && (
           <p className="text-sm rounded border border-amber-600 text-amber-600 px-3 py-2">
             Already in your catalog:{" "}
-            <strong>{mediaTypeLabels[review.existingItem.mediaType]}</strong>{" "}
+            <strong>{categoryLabels[review.existingItem.category]}</strong>{" "}
             &ldquo;{review.existingItem.title}&rdquo;
             {review.existingItem.year && ` (${review.existingItem.year})`}.
             Saving will add a second copy.
@@ -195,22 +206,53 @@ export function Scanner() {
         <input type="hidden" name="rawMetadata" value={review.rawMetadata} />
 
         <div className="flex flex-col gap-1">
-          <label htmlFor="mediaType" className={labelClass}>
-            Media type
+          <label htmlFor="category" className={labelClass}>
+            Category
           </label>
           <select
-            id="mediaType"
-            name="mediaType"
-            defaultValue={review.mediaType}
+            id="category"
+            name="category"
+            value={review.category}
+            onChange={(e) => {
+              const category = e.target.value as Category;
+              setReview({ ...review, category, formats: [] });
+            }}
             className={inputClass}
           >
-            {mediaTypes.map((type) => (
-              <option key={type} value={type}>
-                {type}
+            {categories.map((cat) => (
+              <option key={cat} value={cat}>
+                {categoryLabels[cat]}
               </option>
             ))}
           </select>
         </div>
+
+        {categoryFormats[review.category].length > 0 && (
+          <div className="flex flex-col gap-1">
+            <span className={labelClass}>Formats</span>
+            <div className="flex flex-wrap gap-3">
+              {categoryFormats[review.category].map((format) => (
+                <label key={format} className="flex items-center gap-1.5 text-sm">
+                  <input
+                    type="checkbox"
+                    name="formats"
+                    value={format}
+                    checked={review.formats.includes(format)}
+                    onChange={(e) => {
+                      setReview({
+                        ...review,
+                        formats: e.target.checked
+                          ? [...review.formats, format]
+                          : review.formats.filter((f) => f !== format),
+                      });
+                    }}
+                  />
+                  {formatLabel(format)}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="flex flex-col gap-1">
           <label htmlFor="title" className={labelClass}>
@@ -260,6 +302,15 @@ export function Scanner() {
             className={inputClass}
           />
         </div>
+
+        {review.category === "book" && (
+          <div className="flex flex-col gap-1">
+            <label htmlFor="isbn" className={labelClass}>
+              ISBN
+            </label>
+            <input id="isbn" name="isbn" defaultValue={review.isbn} className={inputClass} />
+          </div>
+        )}
 
         <div className="flex flex-col gap-1">
           <label htmlFor="coverImageUrl" className={labelClass}>
@@ -337,6 +388,13 @@ export function Scanner() {
         >
           Use camera instead
         </button>
+        <button
+          type="button"
+          onClick={handleBlankAdd}
+          className="underline text-sm text-left w-fit"
+        >
+          Add item without scanning
+        </button>
       </div>
     );
   }
@@ -360,6 +418,13 @@ export function Scanner() {
         className="underline text-sm text-left w-fit"
       >
         Enter barcode manually
+      </button>
+      <button
+        type="button"
+        onClick={handleBlankAdd}
+        className="underline text-sm text-left w-fit"
+      >
+        Add item without scanning
       </button>
     </div>
   );

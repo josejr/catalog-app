@@ -1,14 +1,17 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
+import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { items, mediaTypes, users, type MediaType } from "@/lib/db/schema";
-import { mediaTypeLabels } from "@/lib/media-types";
+import { items, categories, favorites, itemTags, users, type Category } from "@/lib/db/schema";
+import { categoryFormats, categoryLabels, formatLabel } from "@/lib/categories";
+import { getFormatColors } from "@/lib/format-colors";
 import { PreferenceLink } from "./preference-link";
 import { CoverImage } from "./cover-image";
-import { and, asc, desc, eq, ilike, or } from "drizzle-orm";
+import { toggleFavoriteAction } from "./items/[id]/actions";
+import { and, arrayOverlaps, asc, desc, eq, ilike, inArray, or } from "drizzle-orm";
 
-function isMediaType(value: string): value is MediaType {
-  return (mediaTypes as readonly string[]).includes(value);
+function isCategory(value: string): value is Category {
+  return (categories as readonly string[]).includes(value);
 }
 
 const sortFields = ["createdAt", "title", "year"] as const;
@@ -29,22 +32,66 @@ function isSortField(value: string): value is SortField {
 
 const SORT_COOKIE = "catalogSort";
 const ADDED_BY_COOKIE = "catalogAddedBy";
+const VIEW_COOKIE = "catalogView";
+const GRID_SIZE_COOKIE = "catalogGridSize";
+
+const gridSizes = ["sm", "md", "lg"] as const;
+type GridSize = (typeof gridSizes)[number];
+function isGridSize(value: string): value is GridSize {
+  return (gridSizes as readonly string[]).includes(value);
+}
+const gridSizeConfig: Record<GridSize, { label: string; minTileWidth: number }> = {
+  sm: { label: "S", minTileWidth: 110 },
+  md: { label: "M", minTileWidth: 150 },
+  lg: { label: "L", minTileWidth: 210 },
+};
 
 export default async function Home({
   searchParams,
 }: {
-  searchParams: Promise<{ type?: string; q?: string; sort?: string; dir?: string; addedBy?: string }>;
+  searchParams: Promise<{
+    category?: string;
+    format?: string;
+    q?: string;
+    sort?: string;
+    dir?: string;
+    addedBy?: string;
+    favorite?: string;
+    tag?: string;
+    view?: string;
+    gridSize?: string;
+  }>;
 }) {
-  const { type, q, sort, dir, addedBy } = await searchParams;
+  const { category, format, q, sort, dir, addedBy, favorite, tag, view, gridSize: gridSizeParam } =
+    await searchParams;
   const cookieStore = await cookies();
+  const session = await auth();
+  const userId = session?.user.id ?? "";
 
-  const activeFilter = type && isMediaType(type) ? type : undefined;
+  const activeCategory = category && isCategory(category) ? category : undefined;
+  // Format tokens are only meaningful once a category narrows their vocabulary
+  // (e.g. "digital" means something different for movies vs. books).
+  const activeFormats = activeCategory
+    ? (format?.split(",").filter((f) => categoryFormats[activeCategory].includes(f)) ?? [])
+    : [];
   const query = q?.trim() || undefined;
+  const activeFavorite = favorite === "1";
 
-  const filterUsers = await db.query.users.findMany({
-    columns: { id: true, name: true },
-    orderBy: asc(users.name),
-  });
+  const [filterUsers, favoriteRows, userTagRows] = await Promise.all([
+    db.query.users.findMany({
+      columns: { id: true, name: true },
+      orderBy: asc(users.name),
+    }),
+    db.select({ itemId: favorites.itemId }).from(favorites).where(eq(favorites.userId, userId)),
+    db
+      .selectDistinct({ tag: itemTags.tag })
+      .from(itemTags)
+      .where(eq(itemTags.userId, userId))
+      .orderBy(asc(itemTags.tag)),
+  ]);
+  const favoriteItemIds = favoriteRows.map((row) => row.itemId);
+  const userTags = userTagRows.map((row) => row.tag);
+  const activeTag = tag && userTags.includes(tag) ? tag : undefined;
 
   const hasSortParam = sort !== undefined;
   const [cookieSortField, cookieSortDir] = (cookieStore.get(SORT_COOKIE)?.value ?? "").split(":");
@@ -69,9 +116,30 @@ export default async function Home({
       ? addedBySelection
       : undefined;
 
+  const viewCookie = cookieStore.get(VIEW_COOKIE)?.value;
+  const viewMode: "list" | "grid" =
+    view === "grid" || view === "list" ? view : viewCookie === "grid" ? "grid" : "list";
+
+  const gridSizeCookie = cookieStore.get(GRID_SIZE_COOKIE)?.value;
+  const gridSize: GridSize =
+    gridSizeParam && isGridSize(gridSizeParam)
+      ? gridSizeParam
+      : gridSizeCookie && isGridSize(gridSizeCookie)
+      ? gridSizeCookie
+      : "md";
+
   const conditions = [];
-  if (activeFilter) conditions.push(eq(items.mediaType, activeFilter));
+  if (activeCategory) conditions.push(eq(items.category, activeCategory));
+  if (activeFormats.length) conditions.push(arrayOverlaps(items.formats, activeFormats));
   if (addedByFilter) conditions.push(eq(items.addedByUserId, addedByFilter));
+  if (activeFavorite) conditions.push(inArray(items.id, favoriteItemIds));
+  if (activeTag) {
+    const tagRows = await db
+      .select({ itemId: itemTags.itemId })
+      .from(itemTags)
+      .where(and(eq(itemTags.userId, userId), eq(itemTags.tag, activeTag)));
+    conditions.push(inArray(items.id, tagRows.map((row) => row.itemId)));
+  }
   if (query) {
     const pattern = `%${query}%`;
     conditions.push(
@@ -86,36 +154,67 @@ export default async function Home({
   const orderFn = sortDir === "asc" ? asc : desc;
 
   const catalogItems = await db.query.items.findMany({
-    with: { addedBy: { columns: { name: true } } },
+    with: {
+      addedBy: { columns: { name: true } },
+      favorites: { where: eq(favorites.userId, userId) },
+    },
     where: conditions.length ? and(...conditions) : undefined,
     orderBy: orderFn(sortFieldConfig[sortField].column),
   });
+  const formatColors = viewMode === "grid" ? await getFormatColors() : undefined;
 
   function hrefFor(overrides: {
-    type?: string | null;
+    category?: string | null;
+    format?: string[] | null;
     q?: string | null;
     sort?: string | null;
     dir?: string | null;
     addedBy?: string | null;
+    favorite?: boolean | null;
+    tag?: string | null;
+    view?: string | null;
+    gridSize?: string | null;
   }) {
     const merged = {
-      type: overrides.type !== undefined ? overrides.type : activeFilter,
+      category: overrides.category !== undefined ? overrides.category : activeCategory,
+      format: overrides.format !== undefined ? overrides.format : activeFormats,
       q: overrides.q !== undefined ? overrides.q : query,
       sort: overrides.sort !== undefined ? overrides.sort : sortField,
       dir: overrides.dir !== undefined ? overrides.dir : sortDir,
       addedBy: overrides.addedBy !== undefined ? overrides.addedBy : addedBySelection,
+      favorite: overrides.favorite !== undefined ? overrides.favorite : activeFavorite,
+      tag: overrides.tag !== undefined ? overrides.tag : activeTag,
+      view: overrides.view !== undefined ? overrides.view : viewMode,
+      gridSize: overrides.gridSize !== undefined ? overrides.gridSize : gridSize,
     };
     const params = new URLSearchParams();
-    if (merged.type) params.set("type", merged.type);
+    if (merged.category) params.set("category", merged.category);
+    if (merged.category && merged.format && merged.format.length) {
+      params.set("format", merged.format.join(","));
+    }
     if (merged.q) params.set("q", merged.q);
+    if (merged.favorite) params.set("favorite", "1");
+    if (merged.tag) params.set("tag", merged.tag);
     if (merged.sort && merged.sort !== "createdAt") params.set("sort", merged.sort);
     const mergedSortField = (merged.sort as SortField) || "createdAt";
     if (merged.dir && merged.dir !== sortFieldConfig[mergedSortField].defaultDir) {
       params.set("dir", merged.dir);
     }
     if (merged.addedBy) params.set("addedBy", merged.addedBy);
+    if (merged.view && merged.view !== "list") params.set("view", merged.view);
+    if (merged.gridSize && merged.gridSize !== "md") params.set("gridSize", merged.gridSize);
     const qs = params.toString();
     return qs ? `/?${qs}` : "/";
+  }
+
+  // Carried through item/edit links so "Save" and "Back to catalog" can
+  // return here with the same filters instead of resetting to "/".
+  const catalogHref = hrefFor({});
+  const itemHref = (itemId: string) => `/items/${itemId}?from=${encodeURIComponent(catalogHref)}`;
+
+  function categoryBadge(item: { category: string; formats: string[] }): string {
+    const label = categoryLabels[item.category as Category] ?? item.category;
+    return item.formats.length ? `${label} · ${item.formats.map(formatLabel).join(", ")}` : label;
   }
 
   const filterLinkClass = (isActive: boolean) =>
@@ -135,20 +234,44 @@ export default async function Home({
 
       <div className="flex flex-col gap-3 text-sm">
         <div className="flex items-center gap-4 flex-wrap">
-          <span className="text-xs uppercase tracking-wide text-neutral-400">Type</span>
-          <Link href={hrefFor({ type: null })} className={filterLinkClass(!activeFilter)}>
+          <span className="text-xs uppercase tracking-wide text-neutral-400">Category</span>
+          <Link
+            href={hrefFor({ category: null, format: null })}
+            className={filterLinkClass(!activeCategory)}
+          >
             All
           </Link>
-          {mediaTypes.map((mt) => (
+          {categories.map((cat) => (
             <Link
-              key={mt}
-              href={hrefFor({ type: mt })}
-              className={filterLinkClass(activeFilter === mt)}
+              key={cat}
+              href={hrefFor({ category: cat, format: null })}
+              className={filterLinkClass(activeCategory === cat)}
             >
-              {mediaTypeLabels[mt]}
+              {categoryLabels[cat]}
             </Link>
           ))}
         </div>
+
+        {activeCategory && categoryFormats[activeCategory].length > 0 && (
+          <div className="flex items-center gap-4 flex-wrap">
+            <span className="text-xs uppercase tracking-wide text-neutral-400">Format</span>
+            {categoryFormats[activeCategory].map((fmt) => {
+              const isActive = activeFormats.includes(fmt);
+              const nextFormats = isActive
+                ? activeFormats.filter((f) => f !== fmt)
+                : [...activeFormats, fmt];
+              return (
+                <Link
+                  key={fmt}
+                  href={hrefFor({ format: nextFormats })}
+                  className={filterLinkClass(isActive)}
+                >
+                  {formatLabel(fmt)}
+                </Link>
+              );
+            })}
+          </div>
+        )}
 
         {filterUsers.length > 1 && (
           <div className="flex items-center gap-4 flex-wrap">
@@ -174,16 +297,51 @@ export default async function Home({
             ))}
           </div>
         )}
+
+        <div className="flex items-center gap-4 flex-wrap">
+          <span className="text-xs uppercase tracking-wide text-neutral-400">Favorites</span>
+          <Link
+            href={hrefFor({ favorite: activeFavorite ? null : true })}
+            className={filterLinkClass(activeFavorite)}
+          >
+            ★ Favorites only
+          </Link>
+        </div>
+
+        {userTags.length > 0 && (
+          <div className="flex items-center gap-4 flex-wrap">
+            <span className="text-xs uppercase tracking-wide text-neutral-400">Tags</span>
+            <Link href={hrefFor({ tag: null })} className={filterLinkClass(!activeTag)}>
+              All
+            </Link>
+            {userTags.map((t) => (
+              <Link
+                key={t}
+                href={hrefFor({ tag: activeTag === t ? null : t })}
+                className={filterLinkClass(activeTag === t)}
+              >
+                {t}
+              </Link>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <form action="/" method="GET" className="flex items-center gap-2 text-sm">
-          {activeFilter && <input type="hidden" name="type" value={activeFilter} />}
+          {activeCategory && <input type="hidden" name="category" value={activeCategory} />}
+          {activeCategory && activeFormats.length > 0 && (
+            <input type="hidden" name="format" value={activeFormats.join(",")} />
+          )}
           {sortField !== "createdAt" && <input type="hidden" name="sort" value={sortField} />}
           {sortDir !== sortFieldConfig[sortField].defaultDir && (
             <input type="hidden" name="dir" value={sortDir} />
           )}
           {addedByFilter && <input type="hidden" name="addedBy" value={addedByFilter} />}
+          {activeFavorite && <input type="hidden" name="favorite" value="1" />}
+          {activeTag && <input type="hidden" name="tag" value={activeTag} />}
+          {viewMode !== "list" && <input type="hidden" name="view" value={viewMode} />}
+          {gridSize !== "md" && <input type="hidden" name="gridSize" value={gridSize} />}
           <input
             type="search"
             name="q"
@@ -224,16 +382,121 @@ export default async function Home({
             );
           })}
         </div>
+
+        <div className="flex items-center gap-4 text-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-neutral-500">View:</span>
+            <PreferenceLink
+              href={hrefFor({ view: "list" })}
+              cookieName={VIEW_COOKIE}
+              cookieValue="list"
+              className={filterLinkClass(viewMode === "list")}
+            >
+              List
+            </PreferenceLink>
+            <PreferenceLink
+              href={hrefFor({ view: "grid" })}
+              cookieName={VIEW_COOKIE}
+              cookieValue="grid"
+              className={filterLinkClass(viewMode === "grid")}
+            >
+              Grid
+            </PreferenceLink>
+          </div>
+          {viewMode === "grid" && (
+            <div className="flex items-center gap-2">
+              <span className="text-neutral-500">Size:</span>
+              {gridSizes.map((size) => (
+                <PreferenceLink
+                  key={size}
+                  href={hrefFor({ gridSize: size })}
+                  cookieName={GRID_SIZE_COOKIE}
+                  cookieValue={size}
+                  className={filterLinkClass(gridSize === size)}
+                >
+                  {gridSizeConfig[size].label}
+                </PreferenceLink>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {catalogItems.length === 0 ? (
         <p className="text-neutral-500">
           {query
             ? `No items match "${query}".`
-            : activeFilter
-            ? `No ${mediaTypeLabels[activeFilter].toLowerCase()} items yet.`
+            : activeCategory
+            ? `No ${categoryLabels[activeCategory].toLowerCase()} items yet.`
             : "No items yet. Scan a barcode to add the first one."}
         </p>
+      ) : viewMode === "grid" ? (
+        <ul
+          className="grid gap-4"
+          style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${gridSizeConfig[gridSize].minTileWidth}px, 1fr))` }}
+        >
+          {catalogItems.map((item) => (
+            <li
+              key={item.id}
+              className="flex flex-col gap-2 rounded-xl border border-neutral-200 dark:border-neutral-800 p-2 bg-white/60 dark:bg-neutral-900/40 shadow-sm hover:shadow-md hover:border-neutral-300 dark:hover:border-neutral-700 transition-all"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] uppercase tracking-wide text-neutral-500">
+                  {categoryLabels[item.category as Category] ?? item.category}
+                </span>
+                <div className="flex items-center gap-1.5">
+                  {item.year && <span className="text-[10px] text-neutral-500">{item.year}</span>}
+                  <form action={toggleFavoriteAction.bind(null, item.id)}>
+                    <button
+                      type="submit"
+                      aria-label={item.favorites.length > 0 ? "Remove from favorites" : "Add to favorites"}
+                      className={`text-sm leading-none ${
+                        item.favorites.length > 0
+                          ? "text-amber-500"
+                          : "text-neutral-300 dark:text-neutral-700 hover:text-amber-500"
+                      } transition-colors`}
+                    >
+                      {item.favorites.length > 0 ? "★" : "☆"}
+                    </button>
+                  </form>
+                </div>
+              </div>
+              <Link href={itemHref(item.id)} className="block">
+                {item.coverImageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={item.coverImageUrl}
+                    alt={item.title}
+                    className="w-full aspect-[2/3] object-cover rounded-md bg-neutral-100 dark:bg-neutral-900"
+                  />
+                ) : (
+                  <div className="w-full aspect-[2/3] rounded-md bg-neutral-100 dark:bg-neutral-900" />
+                )}
+              </Link>
+              <div className="flex flex-col gap-1 min-w-0">
+                <Link
+                  href={itemHref(item.id)}
+                  className="text-sm font-medium truncate hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+                >
+                  {item.title}
+                </Link>
+                {item.formats.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {item.formats.map((format) => (
+                      <span
+                        key={format}
+                        className="rounded-full px-1.5 py-0.5 text-[10px] font-medium text-white"
+                        style={{ backgroundColor: formatColors?.[format] }}
+                      >
+                        {formatLabel(format)}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
       ) : (
         <ul className="flex flex-col gap-3">
           {catalogItems.map((item) => (
@@ -253,8 +516,7 @@ export default async function Home({
               <div className="flex flex-col gap-0.5 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-xs uppercase tracking-wide text-neutral-500">
-                    {mediaTypeLabels[item.mediaType as MediaType] ??
-                      item.mediaType}
+                    {categoryBadge(item)}
                   </span>
                   {item.year && (
                     <span className="text-xs text-neutral-500">
@@ -263,11 +525,16 @@ export default async function Home({
                   )}
                 </div>
                 <Link
-                  href={`/items/${item.id}`}
+                  href={itemHref(item.id)}
                   className="font-medium truncate hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
                 >
                   {item.title}
                 </Link>
+                {item.addedBy?.name && (
+                  <span className="text-xs text-neutral-500 truncate">
+                    Added by {item.addedBy.name}
+                  </span>
+                )}
                 {item.subtitle && (
                   <span className="text-sm text-neutral-500 truncate">
                     {item.subtitle}
@@ -279,12 +546,27 @@ export default async function Home({
                   </span>
                 )}
               </div>
-              <Link
-                href={`/items/${item.id}/edit`}
-                className="underline text-sm shrink-0 self-start text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-300 transition-colors"
-              >
-                Edit
-              </Link>
+              <div className="flex items-center gap-3 shrink-0 self-start">
+                <form action={toggleFavoriteAction.bind(null, item.id)}>
+                  <button
+                    type="submit"
+                    aria-label={item.favorites.length > 0 ? "Remove from favorites" : "Add to favorites"}
+                    className={`text-lg leading-none ${
+                      item.favorites.length > 0
+                        ? "text-amber-500"
+                        : "text-neutral-300 dark:text-neutral-700 hover:text-amber-500"
+                    } transition-colors`}
+                  >
+                    {item.favorites.length > 0 ? "★" : "☆"}
+                  </button>
+                </form>
+                <Link
+                  href={`/items/${item.id}/edit?from=${encodeURIComponent(catalogHref)}`}
+                  className="underline text-sm text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-300 transition-colors"
+                >
+                  Edit
+                </Link>
+              </div>
             </li>
           ))}
         </ul>
