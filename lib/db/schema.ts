@@ -1,5 +1,6 @@
 import { relations } from "drizzle-orm";
 import {
+  integer,
   jsonb,
   pgTable,
   text,
@@ -19,7 +20,7 @@ export const users = pgTable("users", {
     .defaultNow(),
 });
 
-export const mediaTypes = ["book", "cd", "dvd", "other"] as const;
+export const mediaTypes = ["book", "cd", "dvd", "digital", "other"] as const;
 export type MediaType = (typeof mediaTypes)[number];
 
 export const items = pgTable("items", {
@@ -34,6 +35,8 @@ export const items = pgTable("items", {
   notes: text("notes"),
   metadataSource: varchar("metadata_source", { length: 50 }),
   rawMetadata: jsonb("raw_metadata"),
+  plexRatingKey: varchar("plex_rating_key", { length: 32 }).unique(),
+  plexWatchCount: integer("plex_watch_count"),
   addedByUserId: uuid("added_by_user_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),

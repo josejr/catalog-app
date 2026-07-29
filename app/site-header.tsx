@@ -13,7 +13,9 @@ export async function SiteHeader() {
       </Link>
       <nav className="flex items-center gap-4 text-sm">
         <Link href="/">Catalog</Link>
-        <Link href="/scan">Scan</Link>
+        <Link href="/scan" className="md:hidden">
+          Scan
+        </Link>
         {session.user.role === "admin" && (
           <Link href="/admin/users">Users</Link>
         )}

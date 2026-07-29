@@ -36,6 +36,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# cron job output
+/logs/
+
 # claude code (personal, per-developer settings)
 .claude/settings.local.json
 
