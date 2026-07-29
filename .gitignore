@@ -24,6 +24,10 @@
 .DS_Store
 *.pem
 
+# locally-generated TLS cert/key for LAN HTTPS (deployment-specific, not app code)
+/certs/
+/public/catalog-app-ca.crt
+
 # debug
 npm-debug.log*
 yarn-debug.log*
