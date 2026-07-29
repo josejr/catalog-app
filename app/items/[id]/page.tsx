@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { items, type MediaType } from "@/lib/db/schema";
 import { mediaTypeLabels } from "@/lib/media-types";
 import { formatResolution, formatRuntime, getMovieDetail } from "@/lib/plex";
+import { CoverImage } from "@/app/cover-image";
 
 function formatWatchCount(count: number): string {
   return count === 0 ? "Never watched" : `Watched ${count} time${count === 1 ? "" : "s"}`;
@@ -44,10 +45,9 @@ export default async function ItemDetailPage({
     <div className="flex-1 p-6 flex flex-col gap-6 max-w-lg">
       <div className="flex gap-4">
         {item.coverImageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
+          <CoverImage
             src={item.coverImageUrl}
-            alt=""
+            alt={item.title}
             className="w-24 h-32 object-cover rounded shrink-0 bg-neutral-100 dark:bg-neutral-900"
           />
         ) : (
