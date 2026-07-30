@@ -39,6 +39,11 @@ async function performMerge(sourceId: string, targetId: string): Promise<{ error
       .set({ itemId: target.id })
       .where(eq(plexWatchEvents.itemId, source.id));
 
+    // Delete the source before updating the target's plexRatingKey — that
+    // column is unique, so if the source is the Plex-linked one, both rows
+    // would briefly hold the same key otherwise and the update would fail.
+    await tx.delete(items).where(eq(items.id, source.id));
+
     await tx
       .update(items)
       .set({
@@ -53,11 +58,11 @@ async function performMerge(sourceId: string, targetId: string): Promise<{ error
         series: target.series ?? source.series,
         seriesNumber: target.seriesNumber ?? source.seriesNumber,
         sortTitle: target.sortTitle ?? source.sortTitle,
+        plexRatingKey: target.plexRatingKey ?? source.plexRatingKey,
+        plexWatchCount: target.plexWatchCount ?? source.plexWatchCount,
         updatedAt: new Date(),
       })
       .where(eq(items.id, target.id));
-
-    await tx.delete(items).where(eq(items.id, source.id));
   });
 
   return {};

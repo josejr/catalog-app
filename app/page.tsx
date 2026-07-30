@@ -463,19 +463,27 @@ export default async function Home({
                   <img
                     src={item.coverImageUrl}
                     alt={item.title}
-                    className="w-full aspect-[2/3] object-cover rounded-md bg-neutral-100 dark:bg-neutral-900"
+                    className={`w-full ${item.category === "music" ? "aspect-square" : "aspect-[2/3]"} object-cover rounded-md bg-neutral-100 dark:bg-neutral-900`}
                   />
                 ) : (
-                  <div className="w-full aspect-[2/3] rounded-md bg-neutral-100 dark:bg-neutral-900" />
+                  <div
+                    className={`w-full ${item.category === "music" ? "aspect-square" : "aspect-[2/3]"} rounded-md bg-neutral-100 dark:bg-neutral-900`}
+                  />
                 )}
               </Link>
               <div className="flex flex-col gap-1 min-w-0">
+                {item.category === "music" && item.creators && (
+                  <p className="text-xs text-neutral-500 truncate">{item.creators}</p>
+                )}
                 <Link
                   href={itemHref(item.id)}
                   className="text-sm font-medium hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
                 >
                   {item.title}
                 </Link>
+                {item.category !== "music" && item.creators && (
+                  <p className="text-xs text-neutral-500 truncate">{item.creators}</p>
+                )}
                 {item.formats.length > 0 && (
                   <div className="flex flex-wrap gap-1">
                     {item.formats.map((format) => (
@@ -547,12 +555,22 @@ export default async function Home({
                     </span>
                   )}
                 </div>
+                {item.category === "music" && item.creators && (
+                  <span className="text-sm text-neutral-500 truncate">
+                    {item.creators}
+                  </span>
+                )}
                 <Link
                   href={itemHref(item.id)}
                   className="font-medium truncate hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
                 >
                   {item.title}
                 </Link>
+                {item.category !== "music" && item.creators && (
+                  <span className="text-sm text-neutral-500 truncate">
+                    {item.creators}
+                  </span>
+                )}
                 {item.formats.length > 0 && (
                   <div className="flex flex-wrap gap-1">
                     {item.formats.map((format) => (
@@ -574,11 +592,6 @@ export default async function Home({
                 {item.subtitle && (
                   <span className="text-sm text-neutral-500 truncate">
                     {item.subtitle}
-                  </span>
-                )}
-                {item.creators && (
-                  <span className="text-sm text-neutral-500 truncate">
-                    {item.creators}
                   </span>
                 )}
               </div>

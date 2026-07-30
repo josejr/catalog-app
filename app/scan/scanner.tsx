@@ -305,7 +305,7 @@ export function Scanner({
 
         <div className="flex flex-col gap-1">
           <label htmlFor="creators" className={labelClass}>
-            Creators
+            {review.category === "music" ? "Artist" : "Creators"}
           </label>
           <input
             id="creators"

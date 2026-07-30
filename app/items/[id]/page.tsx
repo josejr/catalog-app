@@ -105,10 +105,10 @@ export default async function ItemDetailPage({
 
   const isFavorite = item.favorites.length > 0;
 
+  const isDigitalMovie = item.category === "movie" && item.formats.includes("digital");
   const plexDetail: PlexMovieDetail | undefined =
-    item.category === "movie" && item.formats.includes("digital") && item.plexRatingKey
-      ? await getMovieDetail(item.plexRatingKey)
-      : undefined;
+    isDigitalMovie && item.plexRatingKey ? await getMovieDetail(item.plexRatingKey) : undefined;
+  const plexUnavailable = isDigitalMovie && !plexDetail;
   const media = plexDetail?.Media?.[0];
   const part = media?.Part?.[0];
   const runtime = formatRuntime(plexDetail?.duration);
@@ -250,6 +250,12 @@ export default async function ItemDetailPage({
           </div>
         </div>
 
+        {plexUnavailable && (
+          <p className="text-sm text-amber-600">
+            Marked Digital, but no matching title was found on the Plex server.
+          </p>
+        )}
+
         {plexDetail?.summary && <p className="text-sm">{plexDetail.summary}</p>}
 
         {(item.plexWatchCount !== null || plexDetail) && (
@@ -328,6 +334,12 @@ export default async function ItemDetailPage({
               <p className="text-sm italic text-neutral-500">{plexDetail.tagline}</p>
             )}
           </div>
+
+          {plexUnavailable && (
+            <p className="text-sm text-amber-600">
+              Marked Digital, but no matching title was found on the Plex server.
+            </p>
+          )}
 
           {plexDetail?.summary && <p className="text-sm leading-relaxed">{plexDetail.summary}</p>}
 

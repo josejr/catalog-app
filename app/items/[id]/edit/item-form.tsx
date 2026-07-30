@@ -268,7 +268,7 @@ export function ItemForm({
 
       <div className="flex flex-col gap-1">
         <label htmlFor="creators" className={labelClass}>
-          Creators
+          {category === "music" ? "Artist" : "Creators"}
         </label>
         <input
           id="creators"
