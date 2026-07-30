@@ -19,6 +19,7 @@ Next.js App Router + Auth.js (next-auth v5 beta) + Drizzle ORM over Postgres. Ad
 - Creator/series fields autocomplete against previously-used values across your catalog (native `<datalist>`, no extra JS)
 - Duplicate detection — scanning a barcode already in the catalog warns you before adding a second copy
 - **Merge** two items added by the same person into one (unions their formats, fills in blanks from either side)
+- **Possible-duplicates page** (`/duplicates`) — flags items in the same category with an identical title (e.g. a DVD scanned by hand and the same title auto-synced from Plex as a separate digital row), with a one-click merge button per pair added by the same person
 - **Delete** an item, with a confirmation step and a heads-up if it's Plex-synced (it'll come back on the next sync if still in your library)
 - **Favorites** and **custom tags**, both private per household member — star an item and/or tag it your own way without affecting anyone else's view
 - Plex library sync (`lib/plex/sync.ts`, run via cron) — imports your Plex "Movies" library as catalog items (category `movie`, format `digital`), plus every individual watch event (not just an aggregate count), shown on each item's detail page
@@ -122,6 +123,7 @@ Create the `logs/` directory once before the first run (`mkdir -p logs`) — it'
 - **Metadata lookups**: `lib/metadata-lookup.ts` — ISBN lookups via Open Library, UPC lookups via upcitemdb, plus a uniform search-candidates-then-pick flow per source (Open Library/Hardcover for books, MusicBrainz for music, OMDb/TMDB for movies, iTunes for cover art) used by the edit page's "Search" buttons. `lib/plex.ts` is the equivalent client for the Plex API, used by the standalone `lib/plex/sync.ts` cron script rather than by request-time code.
 - **Mutations are server actions**, not API routes — see `app/scan/actions.ts`, `app/items/[id]/edit/actions.ts`, `app/items/[id]/actions.ts` (favorites/tags), `app/items/[id]/merge/actions.ts`, `app/items/[id]/delete/actions.ts`, `app/admin/users/actions.ts`, `app/admin/settings/actions.ts`, `app/login/actions.ts`. The only route handler is the Auth.js catch-all at `app/api/auth/[...nextauth]/route.ts`. The Plex sync is the one exception to "no standalone scripts besides db:seed" — it runs outside the request lifecycle, via cron.
 - **Item views**: `app/items/[id]/page.tsx` (detail, desktop/mobile layouts), `app/items/[id]/edit/page.tsx` (edit form), `app/items/[id]/merge/page.tsx`, `app/items/[id]/delete/page.tsx`.
+- **Duplicate detection**: `lib/duplicates.ts` groups items by category + normalized title (exact match, not fuzzy — catalog titles come from metadata APIs and are already canonical) for `/duplicates`; the merge logic itself is shared between the manual picker (`mergeItemAction`) and the one-click button there (`quickMergeAction`), both in `app/items/[id]/merge/actions.ts`.
 
 See `CLAUDE.md` / `AGENTS.md` for more detail, including notes on Next 16 breaking changes from what most tooling still assumes.
 

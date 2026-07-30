@@ -56,6 +56,9 @@ export async function SiteHeader() {
         <Link href="/stats" className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
           Stats
         </Link>
+        <Link href="/duplicates" className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
+          Duplicates
+        </Link>
         {session.user.role === "admin" && (
           <details className="relative">
             <summary className="cursor-pointer list-none select-none hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
